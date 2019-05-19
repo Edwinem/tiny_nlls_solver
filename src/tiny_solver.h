@@ -113,21 +113,55 @@ namespace ts {
 //   };
 //
 // The solver supports either statically or dynamically sized cost
-// functions. If the number of residuals is dynamic then the Function
+// functions. If the number of residuals is dynamic then the CostFunction
 // must define:
 //
 //   int NumResiduals() const;
 //
-// If the number of parameters is dynamic then the Function must
+// If the number of parameters is dynamic then the CostFunction must
 // define:
 //
 //   int NumParameters() const;
 //
-template<typename Function,
-         typename LinearSolver = Eigen::LDLT<
-           Eigen::Matrix<typename Function::Scalar,
-                         Function::NUM_PARAMETERS,
-                         Function::NUM_PARAMETERS> > >
+// Custom parameterizations:
+//
+// In order to support operations such as unit quaternion updates you can
+// override the update parameterization by defining your own function
+//
+// template<typename Scalar>
+// struct CustomExtraScalingParameterization {
+//  void operator()(const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_prev,
+//                  const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &dx,
+//                  Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_new) {
+//    x_new = x_prev + 3*dx;
+//  }
+// };
+//
+// To change just change the template parameter ParameterizationFunction.
+// By default it is set to the normal addition operation
+
+
+
+
+// The standard way to add the delta updates to the parameters. Through
+// simple addition. x_new= x_prev+dx
+template<typename Scalar>
+struct DefaultAdditionParameterization {
+
+  void operator()(const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_prev,
+                  const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &dx,
+                  Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_new) {
+    x_new = x_prev + dx;
+  }
+};
+
+template<typename CostFunction,
+    typename LinearSolver = Eigen::LDLT<
+        Eigen::Matrix<typename CostFunction::Scalar,
+                      CostFunction::NUM_PARAMETERS,
+                      CostFunction::NUM_PARAMETERS> >,
+    typename ParameterizationFunction =
+    DefaultAdditionParameterization<typename CostFunction::Scalar> >
 class TinySolver {
  public:
   // This class needs to have an Eigen aligned operator new as it contains
@@ -135,10 +169,10 @@ class TinySolver {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   enum {
-    NUM_RESIDUALS = Function::NUM_RESIDUALS,
-    NUM_PARAMETERS = Function::NUM_PARAMETERS
+    NUM_RESIDUALS = CostFunction::NUM_RESIDUALS,
+    NUM_PARAMETERS = CostFunction::NUM_PARAMETERS
   };
-  typedef typename Function::Scalar Scalar;
+  typedef typename CostFunction::Scalar Scalar;
   typedef typename Eigen::Matrix<Scalar, NUM_PARAMETERS, 1> Parameters;
 
   enum Status {
@@ -147,6 +181,12 @@ class TinySolver {
     COST_TOO_SMALL,                // eps > ||f(x)||^2 / 2
     HIT_MAX_ITERATIONS,
 
+  };
+
+  enum MinimizerMethod {
+    LM, //levenberg marquadt
+    DOGLEG, //powell dogleg
+    GAUSSNEWTON
   };
 
   struct Options {
@@ -166,7 +206,7 @@ class TinySolver {
     Status status = HIT_MAX_ITERATIONS;
   };
 
-  bool Update(const Function& function, const Parameters &x) {
+  bool Update(const CostFunction &function, const Parameters &x) {
     if (!function(x.data(), error_.data(), jacobian_.data())) {
       return false;
     }
@@ -196,10 +236,10 @@ class TinySolver {
     return true;
   }
 
-  const Summary& Solve(const Function& function, Parameters* x_and_min) {
+  const Summary &Solve(const CostFunction &function, Parameters *x_and_min) {
     Initialize<NUM_RESIDUALS, NUM_PARAMETERS>(function);
     assert(x_and_min);
-    Parameters& x = *x_and_min;
+    Parameters &x = *x_and_min;
     summary = Summary();
     summary.iterations = 0;
 
@@ -218,78 +258,98 @@ class TinySolver {
       return summary;
     }
 
-    Scalar u = 1.0 / options.initial_trust_region_radius;
-    Scalar v = 2;
+    switch (min_method) {
 
-    for (summary.iterations = 1;
-         summary.iterations < options.max_num_iterations;
-         summary.iterations++) {
-      jtj_regularized_ = jtj_;
-      const Scalar min_diagonal = 1e-6;
-      const Scalar max_diagonal = 1e32;
-      for (int i = 0; i < lm_diagonal_.rows(); ++i) {
-        lm_diagonal_[i] = std::sqrt(
-            u * std::min(std::max(jtj_(i, i), min_diagonal), max_diagonal));
-        jtj_regularized_(i, i) += lm_diagonal_[i] * lm_diagonal_[i];
-      }
 
-      // TODO(sameeragarwal): Check for failure and deal with it.
-      linear_solver_.compute(jtj_regularized_);
-      lm_step_ = linear_solver_.solve(g_);
-      dx_ = jacobi_scaling_.asDiagonal() * lm_step_;
-
-      // Adding parameter_tolerance to x.norm() ensures that this
-      // works if x is near zero.
-      const Scalar parameter_tolerance =
-          options.parameter_tolerance *
-          (x.norm() + options.parameter_tolerance);
-      if (dx_.norm() < parameter_tolerance) {
-        summary.status = RELATIVE_STEP_SIZE_TOO_SMALL;
+      case GAUSSNEWTON:{
         break;
       }
-      x_new_ = x + dx_;
 
-      // TODO(keir): Add proper handling of errors from user eval of cost
-      // functions.
-      function(&x_new_[0], &f_x_new_[0], NULL);
+      case DOGLEG: {
 
-      const Scalar cost_change = (2 * cost_ - f_x_new_.squaredNorm());
-
-      // TODO(sameeragarwal): Better more numerically stable evaluation.
-      const Scalar model_cost_change = lm_step_.dot(2 * g_ - jtj_ * lm_step_);
-
-      // rho is the ratio of the actual reduction in error to the reduction
-      // in error that would be obtained if the problem was linear. See [1]
-      // for details.
-      Scalar rho(cost_change / model_cost_change);
-      if (rho > 0) {
-        // Accept the Levenberg-Marquardt step because the linear
-        // model fits well.
-        x = x_new_;
-
-        // TODO(sameeragarwal): Deal with failure.
-        Update(function, x);
-        if (summary.gradient_max_norm < options.gradient_tolerance) {
-          summary.status = GRADIENT_TOO_SMALL;
-          break;
-        }
-
-        if (cost_ < options.cost_threshold) {
-          summary.status = COST_TOO_SMALL;
-          break;
-        }
-
-        Scalar tmp = Scalar(2 * rho - 1);
-        u = u * std::max(1 / 3., 1 - tmp * tmp * tmp);
-        v = 2;
-        continue;
+        break;
       }
 
-      // Reject the update because either the normal equations failed to solve
-      // or the local linear model was not good (rho < 0). Instead, increase u
-      // to move closer to gradient descent.
-      u *= v;
-      v *= 2;
+      default: //default is Levengberg Marquadt
+      case LM: {
+        Scalar u = 1.0 / options.initial_trust_region_radius;
+        Scalar v = 2;
+
+        for (summary.iterations = 1;
+             summary.iterations < options.max_num_iterations;
+             summary.iterations++) {
+          jtj_regularized_ = jtj_;
+          const Scalar min_diagonal = 1e-6;
+          const Scalar max_diagonal = 1e32;
+          for (int i = 0; i < lm_diagonal_.rows(); ++i) {
+            lm_diagonal_[i] = std::sqrt(
+                u * std::min(std::max(jtj_(i, i), min_diagonal), max_diagonal));
+            jtj_regularized_(i, i) += lm_diagonal_[i] * lm_diagonal_[i];
+          }
+
+          // TODO(sameeragarwal): Check for failure and deal with it.
+          linear_solver_.compute(jtj_regularized_);
+          lm_step_ = linear_solver_.solve(g_);
+          dx_ = jacobi_scaling_.asDiagonal() * lm_step_;
+
+          // Adding parameter_tolerance to x.norm() ensures that this
+          // works if x is near zero.
+          const Scalar parameter_tolerance =
+              options.parameter_tolerance *
+                  (x.norm() + options.parameter_tolerance);
+          if (dx_.norm() < parameter_tolerance) {
+            summary.status = RELATIVE_STEP_SIZE_TOO_SMALL;
+            break;
+          }
+          //By default just does x_new_ = x + dx_;
+          ParameterizationFunction(x,dx_,x_new_);
+
+          // TODO(keir): Add proper handling of errors from user eval of cost
+          // functions.
+          function(&x_new_[0], &f_x_new_[0], NULL);
+
+          const Scalar cost_change = (2 * cost_ - f_x_new_.squaredNorm());
+
+          // TODO(sameeragarwal): Better more numerically stable evaluation.
+          const Scalar model_cost_change = lm_step_.dot(2 * g_ - jtj_ * lm_step_);
+
+          // rho is the ratio of the actual reduction in error to the reduction
+          // in error that would be obtained if the problem was linear. See [1]
+          // for details.
+          Scalar rho(cost_change / model_cost_change);
+          if (rho > 0) {
+            // Accept the Levenberg-Marquardt step because the linear
+            // model fits well.
+            x = x_new_;
+
+            // TODO(sameeragarwal): Deal with failure.
+            Update(function, x);
+            if (summary.gradient_max_norm < options.gradient_tolerance) {
+              summary.status = GRADIENT_TOO_SMALL;
+              break;
+            }
+
+            if (cost_ < options.cost_threshold) {
+              summary.status = COST_TOO_SMALL;
+              break;
+            }
+
+            Scalar tmp = Scalar(2 * rho - 1);
+            u = u * std::max(1 / 3., 1 - tmp * tmp * tmp);
+            v = 2;
+            continue;
+          }
+
+          // Reject the update because either the normal equations failed to solve
+          // or the local linear model was not good (rho < 0). Instead, increase u
+          // to move closer to gradient descent.
+          u *= v;
+          v *= 2;
+        }
+
+        break;//end of switch case
+      }
+
     }
 
     summary.final_cost = cost_;
@@ -298,6 +358,7 @@ class TinySolver {
 
   Options options;
   Summary summary;
+  MinimizerMethod min_method;
 
  private:
   // Preallocate everything, including temporary storage needed for solving the
@@ -310,41 +371,41 @@ class TinySolver {
   Eigen::Matrix<Scalar, NUM_PARAMETERS, NUM_PARAMETERS> jtj_, jtj_regularized_;
 
   // The following definitions are needed for template metaprogramming.
-  template <bool Condition, typename T>
+  template<bool Condition, typename T>
   struct enable_if;
 
-  template <typename T>
+  template<typename T>
   struct enable_if<true, T> {
     typedef T type;
   };
 
   // The number of parameters and residuals are dynamically sized.
-  template <int R, int P>
+  template<int R, int P>
   typename enable_if<(R == Eigen::Dynamic && P == Eigen::Dynamic), void>::type
-  Initialize(const Function& function) {
+  Initialize(const CostFunction &function) {
     Initialize(function.NumResiduals(), function.NumParameters());
   }
 
   // The number of parameters is dynamically sized and the number of
   // residuals is statically sized.
-  template <int R, int P>
+  template<int R, int P>
   typename enable_if<(R == Eigen::Dynamic && P != Eigen::Dynamic), void>::type
-  Initialize(const Function& function) {
+  Initialize(const CostFunction &function) {
     Initialize(function.NumResiduals(), P);
   }
 
   // The number of parameters is statically sized and the number of
   // residuals is dynamically sized.
-  template <int R, int P>
+  template<int R, int P>
   typename enable_if<(R != Eigen::Dynamic && P == Eigen::Dynamic), void>::type
-  Initialize(const Function& function) {
+  Initialize(const CostFunction &function) {
     Initialize(R, function.NumParameters());
   }
 
   // The number of parameters and residuals are statically sized.
-  template <int R, int P>
+  template<int R, int P>
   typename enable_if<(R != Eigen::Dynamic && P != Eigen::Dynamic), void>::type
-  Initialize(const Function& /* function */) {}
+  Initialize(const CostFunction & /* function */) {}
 
   void Initialize(int num_residuals, int num_parameters) {
     dx_.resize(num_parameters);

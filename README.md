@@ -1,4 +1,4 @@
-# Tiny Solver
+# Tiny MinimizerMethod
 
 
 This is a small non-liner least squares solver. I created it cause I found myself creating an ugly hack version when trying to implement dense visual slam problems.
