@@ -180,6 +180,8 @@ class TinySolver {
     RELATIVE_STEP_SIZE_TOO_SMALL,  // eps > ||dx|| / (||x|| + eps)
     COST_TOO_SMALL,                // eps > ||f(x)||^2 / 2
     HIT_MAX_ITERATIONS,
+    COST_FUNCTION_FAIL,
+    COST_INCREASED
 
   };
 
@@ -196,6 +198,9 @@ class TinySolver {
         std::numeric_limits<Scalar>::epsilon();
     Scalar initial_trust_region_radius = 1e4;
     int max_num_iterations = 50;
+    MinimizerMethod minimizer;
+    bool cost_builds_hessian=false; // the cost function builds
+    //hessian and the gradient directly
   };
 
   struct Summary {
@@ -239,14 +244,21 @@ class TinySolver {
   const Summary &Solve(const CostFunction &function, Parameters *x_and_min) {
     Initialize<NUM_RESIDUALS, NUM_PARAMETERS>(function);
     assert(x_and_min);
+    //build hessian directly is currently incompatable with LM method
+    assert((options.cost_builds_hessian && options.minimizer==LM));
     Parameters &x = *x_and_min;
     summary = Summary();
     summary.iterations = 0;
 
     // TODO(sameeragarwal): Deal with failure here.
-    Update(function, x);
+    bool suc = Update(function, x);
+    if (!suc) {
+      summary.status = COST_FUNCTION_FAIL;
+      return summary;
+    }
     summary.initial_cost = cost_;
     summary.final_cost = cost_;
+    Scalar prev_cost = cost_;
 
     if (summary.gradient_max_norm < options.gradient_tolerance) {
       summary.status = GRADIENT_TOO_SMALL;
@@ -258,15 +270,59 @@ class TinySolver {
       return summary;
     }
 
-    switch (min_method) {
+    switch (options.minimizer) {
 
+      case GAUSSNEWTON: {
 
-      case GAUSSNEWTON:{
+        for (summary.iterations = 1;
+             summary.iterations < options.max_num_iterations;
+             summary.iterations++) {
+
+          linear_solver_.compute(jtj_);
+          dx_ = linear_solver_.solve(g_);
+
+          const Scalar parameter_tolerance =
+              options.parameter_tolerance *
+                  (x.norm() + options.parameter_tolerance);
+          if (dx_.norm() < parameter_tolerance) {
+            summary.status = RELATIVE_STEP_SIZE_TOO_SMALL;
+            break;
+          }
+          //By default just does x_new_ = x + dx_;
+          ParameterizationFunction(x, dx_, x_new_);
+
+          suc = Update(function, x_new_);
+
+          if (!suc) {
+            summary.status = COST_FUNCTION_FAIL;
+            return summary;
+          }
+          //Update made it worse so stop iterations
+          if (cost_ > prev_cost) {
+            summary.status = COST_INCREASED;
+            break;
+          }
+          prev_cost = cost_;
+          x = x_new_;
+          if (summary.gradient_max_norm < options.gradient_tolerance) {
+            summary.status = GRADIENT_TOO_SMALL;
+            break;
+          }
+
+          if (cost_ < options.cost_threshold) {
+            summary.status = COST_TOO_SMALL;
+            break;
+          }
+
+        }
+
         break;
       }
 
       case DOGLEG: {
-
+        Scalar delta_k = 2.0; // trust region radius
+        const Scalar delta_max = 8.0; // max trust region radius
+        const Scalar eta = 0.125; // min reduction ratio allowed (0<eta<0.25)
         break;
       }
 
@@ -302,11 +358,15 @@ class TinySolver {
             break;
           }
           //By default just does x_new_ = x + dx_;
-          ParameterizationFunction(x,dx_,x_new_);
+          ParameterizationFunction(x, dx_, x_new_);
 
           // TODO(keir): Add proper handling of errors from user eval of cost
           // functions.
-          function(&x_new_[0], &f_x_new_[0], NULL);
+          suc = function(&x_new_[0], &f_x_new_[0], NULL);
+          if (!suc) {
+            summary.status = COST_FUNCTION_FAIL;
+            break;
+          }
 
           const Scalar cost_change = (2 * cost_ - f_x_new_.squaredNorm());
 
@@ -322,8 +382,11 @@ class TinySolver {
             // model fits well.
             x = x_new_;
 
-            // TODO(sameeragarwal): Deal with failure.
-            Update(function, x);
+            suc = Update(function, x);
+            if (!suc) {
+              summary.status = COST_FUNCTION_FAIL;
+              break;
+            }
             if (summary.gradient_max_norm < options.gradient_tolerance) {
               summary.status = GRADIENT_TOO_SMALL;
               break;
@@ -347,10 +410,10 @@ class TinySolver {
           v *= 2;
         }
 
-        break;//end of switch case
+        break;//end of LM
       }
 
-    }
+    } //end of switch
 
     summary.final_cost = cost_;
     return summary;
@@ -358,7 +421,6 @@ class TinySolver {
 
   Options options;
   Summary summary;
-  MinimizerMethod min_method;
 
  private:
   // Preallocate everything, including temporary storage needed for solving the
@@ -366,7 +428,7 @@ class TinySolver {
   LinearSolver linear_solver_;
   Scalar cost_;
   Parameters dx_, x_new_, g_, jacobi_scaling_, lm_diagonal_, lm_step_;
-  Eigen::Matrix<Scalar, NUM_RESIDUALS, 1> error_, f_x_new_;
+  Eigen::Matrix<Scalar, NUM_RESIDUALS, 1> error_, f_x_new_, weights_;
   Eigen::Matrix<Scalar, NUM_RESIDUALS, NUM_PARAMETERS> jacobian_;
   Eigen::Matrix<Scalar, NUM_PARAMETERS, NUM_PARAMETERS> jtj_, jtj_regularized_;
 
@@ -416,6 +478,7 @@ class TinySolver {
     lm_step_.resize(num_parameters);
     error_.resize(num_residuals);
     f_x_new_.resize(num_residuals);
+    weights_.resize(num_residuals);
     jacobian_.resize(num_residuals, num_parameters);
     jtj_.resize(num_parameters, num_parameters);
     jtj_regularized_.resize(num_parameters, num_parameters);
