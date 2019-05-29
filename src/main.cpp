@@ -46,11 +46,11 @@ struct S {
        NUM_PARAMETERS = 3,
      };
      bool operator()(const double* parameters,
-                     double* cost,
+                     double* residual,
                      double* gradient,
                      double* hessian) const {
 
-       cost[0]=5;
+       residual[0]=5;
        if (hessian) {
        }
        return true;

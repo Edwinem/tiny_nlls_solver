@@ -53,7 +53,7 @@
 #include <cassert>
 #include <cmath>
 
-#include <Eigen/Dense>
+#include <Eigen/Cholesky> //for default LLDT
 
 #include <type_traits>
 
@@ -145,7 +145,12 @@ namespace ts {
 // By default it is set to the normal addition operation
 
 
-// An example (fully statically sized):
+// In addition to the standard cost function above this version supports
+// directly building the gradient(j*r) and the hessian(jtj).
+// Some advanced usages this allows for:
+// 1) Custom accumulator classes to build Hessian matrix a lot faster( see the
+// dense visual slam projects from TUM)
+// 2) Custom scaling of certain parts of the hessian matrix
 //
 //   struct MyCostFunctionExampleHessian {
 //     typedef double Scalar;
@@ -154,20 +159,23 @@ namespace ts {
 //       NUM_PARAMETERS = 3,
 //     };
 //     bool operator()(const double* parameters,
+//                     double* residuals,
 //                     double* gradient,
-//                     double* hessian,
-//                     double* cost) const {
+//                     double* hessian) const {
 //       residuals[0] = x + 2*y + 4*z;
 //       residuals[1] = y * z;
-//       if (jacobian) {
-//         jacobian[0 * 2 + 0] = 1;   // First column (x).
-//         jacobian[0 * 2 + 1] = 0;
 //
-//         jacobian[1 * 2 + 0] = 2;   // Second column (y).
-//         jacobian[1 * 2 + 1] = z;
+//       if (gradient && hessian) {
 //
-//         jacobian[2 * 2 + 0] = 4;   // Third column (z).
-//         jacobian[2 * 2 + 1] = y;
+//       Eigen::Matrix<Scalar, NUM_RESIDUALS, NUM_PARAMETERS> jac;
+//       //compute Jacobian
+//       Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, 1>> error(residuals);
+//       Eigen::Map<Eigen::Matrix<Scalar, NUM_PARAMETERS, 1>> grad(gradient);
+//       Eigen::Map< Eigen::Matrix<Scalar, NUM_PARAMETERS, NUM_PARAMETERS>>
+//       jtj(hessian);
+//       jtj=jac.transpose()*jac;
+//       grad=jac.transpose()*-error;
+//
 //       }
 //       return true;
 //     }
@@ -378,7 +386,7 @@ class TinySolver {
             break;
           }
 
-          const Scalar cost_change = (2 * cost_ - error_.squaredNorm());
+          const Scalar cost_change = (2 * cost_ - f_x_new_.squaredNorm());
 
           // TODO(sameeragarwal): Better more numerically stable evaluation.
           const Scalar
@@ -467,7 +475,7 @@ class TinySolver {
   UpdateCostFunction(const TFunc &func, const Parameters &x, bool only_cost) {
 
     if (only_cost) {
-      return func(x.data(), error_.data(), NULL);
+      return func(x.data(), f_x_new_.data(), NULL);
     }
 
     if (!func(x.data(), error_.data(), jacobian_.data())) {
@@ -509,12 +517,12 @@ class TinySolver {
   UpdateCostFunction(const TFunc &func, const Parameters &x, bool only_cost) {
     //Only compute the cost(error) with given parameter
     if (only_cost) {
-      return func(x.data(), &cost_, NULL, NULL);
+      return func(x.data(), f_x_new_.data(), NULL, NULL);
     }
 
     //Call the cost function that automatically fills the hessian JtJ and the
     // gradient g_
-    if (!func(x.data(), &cost_, g_.data(), jtj_.data())) {
+    if (!func(x.data(), error_.data(), g_.data(), jtj_.data())) {
       return false;
     }
     summary.gradient_max_norm = g_.array().abs().maxCoeff();
