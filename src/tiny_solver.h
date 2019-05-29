@@ -55,6 +55,8 @@
 
 #include <Eigen/Dense>
 
+#include <type_traits>
+
 namespace ts {
 
 // To use tiny solver, create a class or struct that allows computing the cost
@@ -130,9 +132,11 @@ namespace ts {
 //
 // template<typename Scalar>
 // struct CustomExtraScalingParameterization {
-//  void operator()(const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_prev,
-//                  const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &dx,
-//                  Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_new) {
+//  void operator()(
+//  const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_prev,
+//  const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> dx,
+//  Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new)
+//  {
 //    x_new = x_prev + 3*dx;
 //  }
 // };
@@ -141,6 +145,34 @@ namespace ts {
 // By default it is set to the normal addition operation
 
 
+// An example (fully statically sized):
+//
+//   struct MyCostFunctionExampleHessian {
+//     typedef double Scalar;
+//     enum {
+//       NUM_RESIDUALS = 2,
+//       NUM_PARAMETERS = 3,
+//     };
+//     bool operator()(const double* parameters,
+//                     double* gradient,
+//                     double* hessian,
+//                     double* cost) const {
+//       residuals[0] = x + 2*y + 4*z;
+//       residuals[1] = y * z;
+//       if (jacobian) {
+//         jacobian[0 * 2 + 0] = 1;   // First column (x).
+//         jacobian[0 * 2 + 1] = 0;
+//
+//         jacobian[1 * 2 + 0] = 2;   // Second column (y).
+//         jacobian[1 * 2 + 1] = z;
+//
+//         jacobian[2 * 2 + 0] = 4;   // Third column (z).
+//         jacobian[2 * 2 + 1] = y;
+//       }
+//       return true;
+//     }
+//   };
+
 
 
 // The standard way to add the delta updates to the parameters. Through
@@ -148,9 +180,10 @@ namespace ts {
 template<typename Scalar>
 struct DefaultAdditionParameterization {
 
-  void operator()(const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_prev,
-                  const Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &dx,
-                  Eigen::Matrix<Scalar, Eigen::Dynamic, 1> &x_new) {
+  void operator()(
+      const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_prev,
+      const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> dx,
+      Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new) {
     x_new = x_prev + dx;
   }
 };
@@ -199,8 +232,6 @@ class TinySolver {
     Scalar initial_trust_region_radius = 1e4;
     int max_num_iterations = 50;
     MinimizerMethod minimizer;
-    bool cost_builds_hessian=false; // the cost function builds
-    //hessian and the gradient directly
   };
 
   struct Summary {
@@ -211,41 +242,20 @@ class TinySolver {
     Status status = HIT_MAX_ITERATIONS;
   };
 
-  bool Update(const CostFunction &function, const Parameters &x) {
-    if (!function(x.data(), error_.data(), jacobian_.data())) {
-      return false;
-    }
+  bool Update(const CostFunction &function, const Parameters &x,
+              bool only_compute_cost = false) {
 
-    error_ = -error_;
+    //Call either the standard jacobian+ error cost function and build
+    // jtj and g_ , or call the hessian version
+    UpdateCostFunction(function, x, only_compute_cost);
 
-    // On the first iteration, compute a diagonal (Jacobi) scaling
-    // matrix, which we store as a vector.
-    if (summary.iterations == 0) {
-      // jacobi_scaling = 1 / (1 + diagonal(J'J))
-      //
-      // 1 is added to the denominator to regularize small diagonal
-      // entries.
-      jacobi_scaling_ = 1.0 / (1.0 + jacobian_.colwise().norm().array());
-    }
-
-    // This explicitly computes the normal equations, which is numerically
-    // unstable. Nevertheless, it is often good enough and is fast.
-    //
-    // TODO(sameeragarwal): Refactor this to allow for DenseQR
-    // factorization.
-    jacobian_ = jacobian_ * jacobi_scaling_.asDiagonal();
-    jtj_ = jacobian_.transpose() * jacobian_;
-    g_ = jacobian_.transpose() * error_;
-    summary.gradient_max_norm = g_.array().abs().maxCoeff();
-    cost_ = error_.squaredNorm() / 2;
-    return true;
   }
 
   const Summary &Solve(const CostFunction &function, Parameters *x_and_min) {
+    ParameterizationFunction parameterization_function;
+
     Initialize<NUM_RESIDUALS, NUM_PARAMETERS>(function);
     assert(x_and_min);
-    //build hessian directly is currently incompatable with LM method
-    assert((options.cost_builds_hessian && options.minimizer==LM));
     Parameters &x = *x_and_min;
     summary = Summary();
     summary.iterations = 0;
@@ -289,7 +299,7 @@ class TinySolver {
             break;
           }
           //By default just does x_new_ = x + dx_;
-          ParameterizationFunction(x, dx_, x_new_);
+          parameterization_function(x, dx_, x_new_);
 
           suc = Update(function, x_new_);
 
@@ -358,20 +368,21 @@ class TinySolver {
             break;
           }
           //By default just does x_new_ = x + dx_;
-          ParameterizationFunction(x, dx_, x_new_);
+          parameterization_function(x, dx_, x_new_);
 
-          // TODO(keir): Add proper handling of errors from user eval of cost
-          // functions.
-          suc = function(&x_new_[0], &f_x_new_[0], NULL);
+
+          // Compute costs with new parameters
+          suc = Update(function, x_new_, true);
           if (!suc) {
             summary.status = COST_FUNCTION_FAIL;
             break;
           }
 
-          const Scalar cost_change = (2 * cost_ - f_x_new_.squaredNorm());
+          const Scalar cost_change = (2 * cost_ - error_.squaredNorm());
 
           // TODO(sameeragarwal): Better more numerically stable evaluation.
-          const Scalar model_cost_change = lm_step_.dot(2 * g_ - jtj_ * lm_step_);
+          const Scalar
+              model_cost_change = lm_step_.dot(2 * g_ - jtj_ * lm_step_);
 
           // rho is the ratio of the actual reduction in error to the reduction
           // in error that would be obtained if the problem was linear. See [1]
@@ -403,9 +414,9 @@ class TinySolver {
             continue;
           }
 
-          // Reject the update because either the normal equations failed to solve
-          // or the local linear model was not good (rho < 0). Instead, increase u
-          // to move closer to gradient descent.
+          // Reject the update because either the normal equations failed to
+          // solve or the local linear model was not good (rho < 0). Instead,
+          // increase u to move closer to gradient descent.
           u *= v;
           v *= 2;
         }
@@ -440,6 +451,77 @@ class TinySolver {
   struct enable_if<true, T> {
     typedef T type;
   };
+
+
+
+  //Template magic to deal with two types of cost functions
+  // 1) is the standard ceres cost function computing residuals and
+  // and the jacobians.
+  // 2) You compute the hessian and gradient directly.
+
+  template<typename TFunc>
+  typename std::enable_if<std::is_same<typename std::result_of<
+      TFunc(const double *parameters,
+            double *residuals,
+            double *jacobian)>::type, bool>::value, bool>::type
+  UpdateCostFunction(const TFunc &func, const Parameters &x, bool only_cost) {
+
+    if (only_cost) {
+      return func(x.data(), error_.data(), NULL);
+    }
+
+    if (!func(x.data(), error_.data(), jacobian_.data())) {
+      return false;
+    }
+
+    error_ = -error_;
+
+    // On the first iteration, compute a diagonal (Jacobi) scaling
+    // matrix, which we store as a vector.
+    if (summary.iterations == 0) {
+      // jacobi_scaling = 1 / (1 + diagonal(J'J))
+      //
+      // 1 is added to the denominator to regularize small diagonal
+      // entries.
+      jacobi_scaling_ = 1.0 / (1.0 + jacobian_.colwise().norm().array());
+    }
+
+    // This explicitly computes the normal equations, which is numerically
+    // unstable. Nevertheless, it is often good enough and is fast.
+    //
+    // TODO(sameeragarwal): Refactor this to allow for DenseQR
+    // factorization.
+    jacobian_ = jacobian_ * jacobi_scaling_.asDiagonal();
+    jtj_ = jacobian_.transpose() * jacobian_;
+    g_ = jacobian_.transpose() * error_;
+    summary.gradient_max_norm = g_.array().abs().maxCoeff();
+    cost_ = error_.squaredNorm() / 2;
+    return true;
+
+  }
+
+  template<typename TFunc>
+  typename std::enable_if<std::is_same<typename std::result_of<
+      TFunc(const double *parameters,
+            double *gradient,
+            double *hessian,
+            double *cost)>::type, bool>::value, bool>::type
+  UpdateCostFunction(const TFunc &func, const Parameters &x, bool only_cost) {
+    //Only compute the cost(error) with given parameter
+    if (only_cost) {
+      return func(x.data(), &cost_, NULL, NULL);
+    }
+
+    //Call the cost function that automatically fills the hessian JtJ and the
+    // gradient g_
+    if (!func(x.data(), &cost_, g_.data(), jtj_.data())) {
+      return false;
+    }
+    summary.gradient_max_norm = g_.array().abs().maxCoeff();
+
+    return true;
+
+  }
 
   // The number of parameters and residuals are dynamically sized.
   template<int R, int P>
