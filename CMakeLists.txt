@@ -4,6 +4,7 @@ project(tiny_solver)
 
 #Options
 option(WITH_TESTING     "Turn on testing with gtest"                             OFF)
+option(WITH_EXAMPLES    "Turn on the examples"                             ON)
 
 set (CMAKE_CXX_STANDARD 11)
 
@@ -14,14 +15,26 @@ set (CMAKE_CXX_STANDARD 11)
 find_package(Eigen3)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
-#if(${WITH_TESTING})
-#enable_testing()
-#find_package(GTest REQUIRED)
-#
-#endif()
-
-
 include_directories(src)
 
 
 add_executable(main src/main.cpp src/tiny_solver.h)
+
+
+if(${WITH_TESTING})
+    include_directories(tests)
+    include(cmake/googletest.cmake)
+    fetch_googletest(
+            ${PROJECT_SOURCE_DIR}/cmake
+            ${PROJECT_BINARY_DIR}/googletest
+    )
+
+    enable_testing()
+    add_subdirectory(tests)
+
+endif()
+
+if(${WITH_EXAMPLES})
+    add_subdirectory(examples)
+
+endif()

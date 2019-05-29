@@ -313,11 +313,12 @@ class TinySolver {
 
           if (!suc) {
             summary.status = COST_FUNCTION_FAIL;
-            return summary;
+            break;
           }
           //Update made it worse so stop iterations
           if (cost_ > prev_cost) {
             summary.status = COST_INCREASED;
+            cost_=prev_cost; //ensures final cost is last good one
             break;
           }
           prev_cost = cost_;
@@ -511,9 +512,9 @@ class TinySolver {
   template<typename TFunc>
   typename std::enable_if<std::is_same<typename std::result_of<
       TFunc(const double *parameters,
+            double *residuals,
             double *gradient,
-            double *hessian,
-            double *cost)>::type, bool>::value, bool>::type
+            double *hessian)>::type, bool>::value, bool>::type
   UpdateCostFunction(const TFunc &func, const Parameters &x, bool only_cost) {
     //Only compute the cost(error) with given parameter
     if (only_cost) {
