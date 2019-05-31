@@ -7,8 +7,44 @@ problems. A good amount of this project derives from the tiny solver in Ceres.
 
 
 ## How to use
-todo
 
+
+Examples:
+
+```cpp
+
+//Define cost function
+class ExampleCostFunction {
+ public:
+  typedef double Scalar;
+  enum {
+    // Can also be Eigen::Dynamic.
+    NUM_RESIDUALS = 2,
+    NUM_PARAMETERS = 3,
+  };
+  bool operator()(const double* parameters,
+                  double* residuals,
+                  double* jacobian) const {
+    return EvaluateResidualsAndJacobians(parameters, residuals, jacobian);
+  }
+};
+
+//Create the tiny solver
+
+ts::TinySolver<ExampleCostFunction> solver;
+
+ExampleCostFunction cost_functor;
+
+Vec3 initial_guess(0.76026643, -30.01799744, 0.55192142);
+
+solver.Solve(cost_functor,&initial_guess);
+
+Vec3 answer=initial_guess;
+
+std::cout << answer << std::endl;
+
+
+```
 
 ## Advanced Usages
 todo
