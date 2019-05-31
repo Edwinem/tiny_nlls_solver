@@ -1,6 +1,5 @@
 
 
-
 /**
  *
  * This example contains a solver to triangulate a 3D point viewed from multiple
@@ -14,16 +13,12 @@
  * Conference on Robotics and Automation, Roma, 2007, pp. 3565-3572.
  * doi: 10.1109/ROBOT.2007.364024
  *
- *
- *
- *
- *
- *
- *
  */
 
 
 #include <Eigen/Geometry>
+#include <iostream>
+#include <tiny_solver.h>
 using Vec2d=Eigen::Vector2d;
 using Vec3d=Eigen::Vector3d;
 using VecXd=Eigen::VectorXd;
@@ -33,16 +28,16 @@ using MatXd=Eigen::MatrixXd;
  * Compute the Reprojection error between a 3D point and its projection
  * into a camera position
  * \param pose Camera position
- * \param pt3d 3D point
+ * \param pt_msckf Point in MSCKF format alpha,beta,rho
  * \param proj Normalized Coordinates image projection
  * \return ReprojectionError
  */
 Vec2d ReprojectionError(const Eigen::Isometry3d &pose,
-                        const Vec3d &pt3d,
+                        const Vec3d &pt_msckf,
                         const Vec2d &proj) {
-  const double alpha = pt3d(0);
-  const double beta = pt3d(0);
-  const double rho = pt3d(0);
+  const double alpha = pt_msckf(0);
+  const double beta = pt_msckf(1);
+  const double rho = pt_msckf(2);
 
   Vec3d h = pose.linear() * Vec3d(alpha, beta, 1.0) + rho * pose.translation();
 
@@ -53,14 +48,12 @@ Vec2d ReprojectionError(const Eigen::Isometry3d &pose,
 /**
  * Compute the Jacobian of a 3D point
  * \param T_c0_ci Position of the camera
- * \param x 3D point
+ * \param x Point MSCKF format
  * \param z Measurement/Projection in normalized Image coordinates
  * \param J 2x3 Jacobian is returned here
  */
-void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci,
-                        const Vec3d &x,
-                        const Vec2d &z,
-                        MatXd &J) {
+void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci, const Vec3d &x,
+                        const Vec2d &z, MatXd &J) {
 
   // Compute hi1, hi2, and hi3 as Equation (37).
   const double &alpha = x(0);
@@ -82,6 +75,10 @@ void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci,
   J.row(0) = 1 / h3 * W.row(0) - h1 / (h3 * h3) * W.row(2);
   J.row(1) = 1 / h3 * W.row(1) - h2 / (h3 * h3) * W.row(2);
 
+//  // Compute the residual.
+//  Vec2d z_hat(h1 / h3, h2 / h3);
+//  r = z_hat - z;
+
 
 //  // Compute the weight based on the residual.
 //  double e             = r.norm();
@@ -94,6 +91,24 @@ void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci,
 }
 
 struct TriangulationCostFunction {
+  TriangulationCostFunction(
+      std::vector<Eigen::Isometry3d,
+                  Eigen::aligned_allocator<Eigen::Isometry3d>> &poses,
+      std::vector<Eigen::Vector2d,
+                  Eigen::aligned_allocator<Eigen::Vector2d>> &projections) {
+    this->projections = projections;
+
+    //Convert the poses so that relative to the first pose so that pose[0] is
+    // the identity matrix
+    this->poses = poses;
+    Eigen::Isometry3d T_c0_w = this->poses[0];
+    for (auto &pose : this->poses) {
+      pose = pose.inverse() * T_c0_w;
+
+    }
+
+  }
+
   typedef double Scalar;
   enum {
     NUM_RESIDUALS = Eigen::Dynamic,
@@ -120,19 +135,17 @@ struct TriangulationCostFunction {
     if (jacobian) {
 
       Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, NUM_PARAMETERS>>
-          jac (jacobian, NumResiduals(), NUM_PARAMETERS);
+          jac(jacobian, NumResiduals(), NUM_PARAMETERS);
 
       MatXd J_work = MatXd::Zero(2, 3);
       for (int idx = 0; idx < poses.size(); ++idx) {
-        FeatureOptJacobian(poses[0], point, projections[idx], J_work);
-        jac.block(idx*2,0,2,3)=J_work;
+        FeatureOptJacobian(poses[idx], point, projections[idx], J_work);
+        jac.block(idx * 2, 0, 2, 3) = J_work;
       }
     }
 
     return true;
   }
-
- private:
 
   std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>>
       poses;
@@ -141,6 +154,75 @@ struct TriangulationCostFunction {
 
 };
 
+
+Eigen::Vector2d reprojectPoint(
+    const Eigen::Isometry3d &G_T_C, const Eigen::Vector3d &G_p_fi) {
+  const Eigen::Vector3d C_p_fi = G_T_C.inverse() * G_p_fi;
+  return C_p_fi.hnormalized().head<2>();
+}
+
 int main() {
+
+  const int number_view = 5;
+  Eigen::Quaterniond rotations[] = {
+      Eigen::Quaterniond(1, 0, 0, 0),
+      Eigen::Quaterniond(
+          Eigen::Quaterniond(
+              Eigen::AngleAxisd(0.15, Eigen::Vector3d(0.0, 1.0, 0.1)))
+              .normalized()),
+      Eigen::Quaterniond(
+          Eigen::Quaterniond(
+              Eigen::AngleAxisd(0.05, Eigen::Vector3d(0.3, 1.0, 0.0)))
+              .normalized()),
+      Eigen::Quaterniond(
+          Eigen::Quaterniond(
+              Eigen::AngleAxisd(0.15, Eigen::Vector3d(0.2, 0.3, 0.1)))
+              .normalized()),
+      Eigen::Quaterniond(
+          Eigen::Quaterniond(
+              Eigen::AngleAxisd(-0.1, Eigen::Vector3d(0.1, 1.0, 0.0)))
+              .normalized())};
+
+  Vec3d positions[] = {
+      Vec3d(0, 0, 0), Vec3d(-3, 0, 0),
+      Vec3d(0.85, 0.1, -0.3), Vec3d(-0.1, -0.05, 0.4),
+      Vec3d(0.7, 0.3, 0.21)};
+
+  const Vec3d pt3d(1.5, 0.0, 4.0);
+
+  std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>>
+      poses;
+
+  std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>
+      projections;
+  for (int idx = 0; idx < 5; ++idx) {
+    Eigen::Matrix4d pose;
+    pose.block<3, 3>(0, 0) = rotations[idx].toRotationMatrix();
+    pose.block<3, 1>(0, 3) = positions[idx];
+    Eigen::Isometry3d iso(pose);
+    poses.push_back(iso);
+    projections.push_back(reprojectPoint(iso, pt3d));
+  }
+
+  ts::TinySolver<TriangulationCostFunction> solver;
+
+  TriangulationCostFunction cost_functor(poses, projections);
+
+  Vec3d initial_guess(1.4, 0.1, 4.2);
+
+  //Convert to msckf form alpha,beta,rho
+  initial_guess /= initial_guess[2];
+  initial_guess[2] = 1.0 / initial_guess[2];
+  solver.Solve(cost_functor, &initial_guess);
+
+  //Convert MSCKF form alpha,beta,rho back to normal 3D
+  Eigen::Vector3d final_position(initial_guess(0) / initial_guess(2),
+                                 initial_guess(1) / initial_guess(2),
+                                 1.0 / initial_guess(2));
+
+  //We triangulate it with the first position as the origin. Here we undo this
+  final_position = poses[0].linear() * final_position + poses[0].translation();
+  
+  std::cout << final_position.transpose() << std::endl;
 
 }
