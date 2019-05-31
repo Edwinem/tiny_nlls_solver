@@ -250,7 +250,7 @@ class TinySolver {
     Status status = HIT_MAX_ITERATIONS;
   };
 
-  bool Update(const CostFunction &function, const Parameters &x,
+  bool Update(CostFunction &function, const Parameters &x,
               bool only_compute_cost = false) {
 
     //Call either the standard jacobian+ error cost function and build
@@ -259,7 +259,7 @@ class TinySolver {
 
   }
 
-  const Summary &Solve(const CostFunction &function, Parameters *x_and_min) {
+  const Summary &Solve(CostFunction &function, Parameters *x_and_min) {
     ParameterizationFunction parameterization_function;
 
     Initialize<NUM_RESIDUALS, NUM_PARAMETERS>(function);
@@ -473,7 +473,7 @@ class TinySolver {
       TFunc(const double *parameters,
             double *residuals,
             double *jacobian)>::type, bool>::value, bool>::type
-  UpdateCostFunction(const TFunc &func, const Parameters &x, bool only_cost) {
+  UpdateCostFunction(TFunc &func, const Parameters &x, bool only_cost) {
 
     if (only_cost) {
       return func(x.data(), f_x_new_.data(), NULL);
@@ -515,7 +515,7 @@ class TinySolver {
             double *residuals,
             double *gradient,
             double *hessian)>::type, bool>::value, bool>::type
-  UpdateCostFunction(const TFunc &func, const Parameters &x, bool only_cost) {
+  UpdateCostFunction(TFunc &func, const Parameters &x, bool only_cost) {
     //Only compute the cost(error) with given parameter
     if (only_cost) {
       return func(x.data(), f_x_new_.data(), NULL, NULL);
