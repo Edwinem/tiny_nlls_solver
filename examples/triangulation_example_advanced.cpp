@@ -2,8 +2,8 @@
 
 /**
  *
- * This example contains a solver to triangulate a 3D point viewed from multiple
- * camera poses.
+ * This is the same as triangulation_example.cpp except it builds the hessian
+ * matrix directly which allows for some more advanced tricks.
  *
  * The formulation of this version comes from the triangulation method first
  * introduced in the MSCKF paper:
@@ -53,7 +53,8 @@ Vec2d ReprojectionError(const Eigen::Isometry3d &pose,
  * \param J 2x3 Jacobian is returned here
  */
 void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci, const Vec3d &x,
-                        const Vec2d &z, Eigen::Matrix<double,2,3> &J) {
+                        const Vec2d &z, Eigen::Matrix<double,2,3> &J, Eigen::Vector2d &res,
+                        double &w) {
 
   // Compute hi1, hi2, and hi3 as Equation (37).
   const double &alpha = x(0);
@@ -75,19 +76,20 @@ void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci, const Vec3d &x,
   J.row(0) = 1 / h3 * W.row(0) - h1 / (h3 * h3) * W.row(2);
   J.row(1) = 1 / h3 * W.row(1) - h2 / (h3 * h3) * W.row(2);
 
-//  // Compute the residual.
-//  Vec2d z_hat(h1 / h3, h2 / h3);
-//  r = z_hat - z;
+  // Compute the residual.
+  Vec2d z_hat(h1 / h3, h2 / h3);
+  res = z_hat - z;
 
 
-//  // Compute the weight based on the residual.
-//  double e             = r.norm();
-//  double huber_epsilon = 0.01;
-//  if (e <= huber_epsilon) {
-//    w = 1.0;
-//  } else {
-//    w = huber_epsilon / (2 * e);
-//  }
+//   Compute the weight based on the residual.
+  double e = res.norm();
+  double huber_epsilon = 0.01;
+  if (e <= huber_epsilon) {
+    w = 1.0;
+  } else {
+    w = huber_epsilon / (2 * e);
+  }
+
 }
 
 struct TriangulationCostFunction {
@@ -121,7 +123,8 @@ struct TriangulationCostFunction {
 
   bool operator()(const double *parameters,
                   double *residuals,
-                  double *jacobian) const {
+                  double *gradient,
+                  double *hessian) const {
 
     Eigen::Map<const Eigen::Vector3d> point(parameters);
 
@@ -132,17 +135,32 @@ struct TriangulationCostFunction {
       residuals[idx * 2 + 1] = error[1];
     }
 
-    if (jacobian) {
+    if (gradient && hessian) {
 
-      Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, NUM_PARAMETERS>>
-          jac(jacobian, NumResiduals(), NUM_PARAMETERS);
+      Eigen::Map<Eigen::Matrix<Scalar, NUM_PARAMETERS, 1>>
+          b(gradient, NUM_PARAMETERS, 1);
+      Eigen::Map<Eigen::Matrix<Scalar, NUM_PARAMETERS, NUM_PARAMETERS>>
+          A(hessian, NUM_PARAMETERS, NUM_PARAMETERS);
+      A.setZero();
+      b.setZero();
 
-      Eigen::Matrix<Scalar,2,3> J_work = MatXd::Zero(2, 3);
+      Eigen::Matrix<double,2,3> J_work = MatXd::Zero(2, 3);
       for (int idx = 0; idx < poses.size(); ++idx) {
-        FeatureOptJacobian(poses[idx], point, projections[idx], J_work);
-        jac.block(idx * 2, 0, 2, 3) = J_work;
+        double weight;
+        Eigen::Vector2d res;
+        FeatureOptJacobian(poses[idx], point, projections[idx], J_work, res,
+                           weight);
+        if (weight == 1) {
+          A += J_work.transpose() * J_work;
+          b += J_work.transpose() * -res;
+        } else {
+          double w_square = weight * weight;
+          A += w_square * J_work.transpose() * J_work;
+          b += w_square * J_work.transpose() * -res;
+        }
       }
 
+      //std::cout << "jac: \n" << jac << "\n";
     }
 
     return true;
@@ -154,7 +172,6 @@ struct TriangulationCostFunction {
       projections;
 
 };
-
 
 Eigen::Vector2d reprojectPoint(
     const Eigen::Isometry3d &G_T_C, const Eigen::Vector3d &G_p_fi) {

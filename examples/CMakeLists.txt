@@ -15,3 +15,4 @@ endif()
 
 
 add_executable(triangulation triangulation_example.cpp)
+add_executable(triangulation_advanced triangulation_example_advanced.cpp)

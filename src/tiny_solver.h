@@ -255,7 +255,7 @@ class TinySolver {
 
     //Call either the standard jacobian+ error cost function and build
     // jtj and g_ , or call the hessian version
-    UpdateCostFunction(function, x, only_compute_cost);
+    return UpdateCostFunction(function, x, only_compute_cost);
 
   }
 
@@ -493,6 +493,7 @@ class TinySolver {
       // 1 is added to the denominator to regularize small diagonal
       // entries.
       jacobi_scaling_ = 1.0 / (1.0 + jacobian_.colwise().norm().array());
+      jacobi_scaling_.setConstant(1.0);
     }
 
     // This explicitly computes the normal equations, which is numerically
@@ -500,7 +501,7 @@ class TinySolver {
     //
     // TODO(sameeragarwal): Refactor this to allow for DenseQR
     // factorization.
-    jacobian_ = jacobian_ * jacobi_scaling_.asDiagonal();
+    //jacobian_ = jacobian_ * jacobi_scaling_.asDiagonal();
     jtj_ = jacobian_.transpose() * jacobian_;
     g_ = jacobian_.transpose() * error_;
     summary.gradient_max_norm = g_.array().abs().maxCoeff();
@@ -521,13 +522,25 @@ class TinySolver {
       return func(x.data(), f_x_new_.data(), NULL, NULL);
     }
 
+    //this keeps the end user safe from accidentally not resetting the matrices
+    jtj_.setZero();
+    g_.setZero();
     //Call the cost function that automatically fills the hessian JtJ and the
     // gradient g_
     if (!func(x.data(), error_.data(), g_.data(), jtj_.data())) {
       return false;
     }
-    summary.gradient_max_norm = g_.array().abs().maxCoeff();
 
+    if (summary.iterations == 0) {
+      //no scaling. End user is responsible for making sure the hessian
+      //is properly conditioned
+      jacobi_scaling_.setConstant(1.0);
+    }
+
+
+    error_ = -error_;
+    summary.gradient_max_norm = g_.array().abs().maxCoeff();
+    cost_ = error_.squaredNorm() / 2;
     return true;
 
   }
