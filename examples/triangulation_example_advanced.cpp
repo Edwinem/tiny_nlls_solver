@@ -231,11 +231,12 @@ int main() {
   TriangulationCostFunction cost_functor(poses, projections);
 
   Vec3d initial_guess(1.4, 0.1, 4.2);
+  Vec3d copy=initial_guess;
 
   //Convert to msckf form alpha,beta,rho
   initial_guess /= initial_guess[2];
   initial_guess[2] = 1.0 / initial_guess[2];
-  solver.Solve(cost_functor, &initial_guess);
+  auto summary=solver.Solve(cost_functor, &initial_guess);
 
   //Convert MSCKF form alpha,beta,rho back to normal 3D
   Eigen::Vector3d final_position(initial_guess(0) / initial_guess(2),
@@ -245,6 +246,9 @@ int main() {
   //We triangulate it with the first position as the origin. Here we undo this
   final_position = poses[0].linear() * final_position + poses[0].translation();
 
-  std::cout << final_position.transpose() << std::endl;
+  std::cout <<  "True answer is " << pt3d.transpose() << "\n" <<
+            "Started with initial guess of " << copy.transpose() << "\n" <<
+            "Optimized to a position of " << final_position.transpose() <<
+            " with a final cost of "<< summary.final_cost << ".\n";
 
 }
