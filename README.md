@@ -151,6 +151,26 @@ QuaternionNormedParameterization<typename CostFunction::Scalar>> solver;
 
 ```
 
+### Changing the Solver/Decomposition method
+By default the tiny_solver uses **Eigen's** **LDLT** decomposition. This can be
+changed to any of **Eigen's** other decompositions such as **LLT** or 
+**HouseholderQR**.
+
+Since it is templated you can also change the decomposition to your own custom 
+version.
+
+```cpp
+
+struct CostFunction{
+ //some cost function
+}
+
+using LinearSolver=Eigen::HouseholderQR<Eigen::Matrix<typename CostFunction::Scalar,
+                               CostFunction::NUM_PARAMETERS,CostFunction::NUM_PARAMETERS> >
+ts::TinySolver<CostFunction,LinearSolver> solver;
+
+
+```
 
 ## Using this directory
 This directory provides unit testing and advanced examples on how to use the tiny_solver.
