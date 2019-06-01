@@ -9,8 +9,6 @@ problems. A good amount of this project derives from the tiny solver in Ceres.
 ## How to use
 
 
-Examples:
-
 ```cpp
 
 //Define cost function
@@ -42,12 +40,47 @@ solver.Solve(cost_functor,&initial_guess);
 Vec3 answer=initial_guess;
 
 std::cout << answer << std::endl;
-
-
 ```
 
+For less contrived examples I recommend perusing **/examples** specifically
+[triangulation_example.cpp](examples/triangulation_example.cpp) and
+ [triangulation_example_advanced.cpp](examples/triangulation_example_advanced.cpp).
+ They both show the same method to minimize the position of a 3D point viewed
+ from multiple cameras. The advanced version shows how to use the hessian based
+ cost function.
+
+
 ## Advanced Usages
-todo
+The solver supports another type of cost function which allows you to build the
+hessian and gradient matrices directly. The functor should look like the
+ following
+```cpp
+
+class ExampleCostFunction {
+ public:
+  typedef double Scalar;
+  enum {
+    NUM_RESIDUALS = 2,
+    NUM_PARAMETERS = 3,
+  };
+  bool operator()(const double* parameters,
+                  double* residual,
+                  double* gradient,
+                  double* hessian) const {
+    // do something
+    return true;
+  }
+};
+```
+
+As you are building the Normal Equations you can directly modify them to suit
+your needs. Possible things you can do:
+* Custom Preconditioner. You can modify the the hessian for better numerical
+stability.
+* Custom Accumulation methods to build the matrices faster. This could involve 
+threading or custom SIMD like in [DVO](https://github.com/tum-vision/dvo/blob/bd21a70ce76d882a354de7b89d2429f974b8814c/dvo_core/include/dvo/core/math_sse.h#L48).
+* Weighting functions. You can apply huber norms or other weighting schemes.
+
 
 ## Possible bugs
 

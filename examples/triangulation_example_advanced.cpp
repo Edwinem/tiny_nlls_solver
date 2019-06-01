@@ -3,7 +3,8 @@
 /**
  *
  * This is the same as triangulation_example.cpp except it builds the hessian
- * matrix directly which allows for some more advanced tricks.
+ * matrix directly which allows for some more advanced tricks such as the huber
+ * norm.
  *
  * The formulation of this version comes from the triangulation method first
  * introduced in the MSCKF paper:
@@ -52,8 +53,11 @@ Vec2d ReprojectionError(const Eigen::Isometry3d &pose,
  * \param z Measurement/Projection in normalized Image coordinates
  * \param J 2x3 Jacobian is returned here
  */
-void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci, const Vec3d &x,
-                        const Vec2d &z, Eigen::Matrix<double,2,3> &J, Eigen::Vector2d &res,
+void FeatureOptJacobian(const Eigen::Isometry3d &T_c0_ci,
+                        const Vec3d &x,
+                        const Vec2d &z,
+                        Eigen::Matrix<double, 2, 3> &J,
+                        Eigen::Vector2d &res,
                         double &w) {
 
   // Compute hi1, hi2, and hi3 as Equation (37).
@@ -144,12 +148,14 @@ struct TriangulationCostFunction {
       A.setZero();
       b.setZero();
 
-      Eigen::Matrix<double,2,3> J_work = MatXd::Zero(2, 3);
+      Eigen::Matrix<double, 2, 3> J_work = MatXd::Zero(2, 3);
       for (int idx = 0; idx < poses.size(); ++idx) {
         double weight;
         Eigen::Vector2d res;
         FeatureOptJacobian(poses[idx], point, projections[idx], J_work, res,
                            weight);
+
+        //Utilize the weighting from the calculated huber norm
         if (weight == 1) {
           A += J_work.transpose() * J_work;
           b += J_work.transpose() * -res;
@@ -159,8 +165,6 @@ struct TriangulationCostFunction {
           b += w_square * J_work.transpose() * -res;
         }
       }
-
-      //std::cout << "jac: \n" << jac << "\n";
     }
 
     return true;
