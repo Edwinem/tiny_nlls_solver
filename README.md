@@ -24,6 +24,7 @@ Example on how to use the solver:
 ```cpp
 #include <src/tiny_solver.h>
 
+
 //Define cost function
 class ExampleCostFunction {
  public:
@@ -36,7 +37,24 @@ class ExampleCostFunction {
   bool operator()(const double* parameters,
                   double* residuals,
                   double* jacobian) const {
-    return EvaluateResidualsAndJacobians(parameters, residuals, jacobian);
+      Scalar x = parameters[0];
+      Scalar y = parameters[1];
+      Scalar z = parameters[2];
+    
+      residuals[0] = x + 2 * y + 4 * z;
+      residuals[1] = y * z;
+    
+      if (jacobian) {
+        jacobian[0 * 2 + 0] = 1;
+        jacobian[0 * 2 + 1] = 0;
+    
+        jacobian[1 * 2 + 0] = 2;
+        jacobian[1 * 2 + 1] = z;
+    
+        jacobian[2 * 2 + 0] = 4;
+        jacobian[2 * 2 + 1] = y;
+      }
+      return true;
   }
 };
 
