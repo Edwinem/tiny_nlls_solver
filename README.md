@@ -40,10 +40,8 @@ class ExampleCostFunction {
       Scalar x = parameters[0];
       Scalar y = parameters[1];
       Scalar z = parameters[2];
-    
       residuals[0] = x + 2 * y + 4 * z;
       residuals[1] = y * z;
-    
       if (jacobian) {
         jacobian[0 * 2 + 0] = 1;
         jacobian[0 * 2 + 1] = 0;
@@ -59,16 +57,12 @@ class ExampleCostFunction {
 };
 
 //Create the tiny solver
-
 ts::TinySolver<ExampleCostFunction> solver;
-
 ExampleCostFunction cost_functor;
 
 Vec3 initial_guess(0.76026643, -30.01799744, 0.55192142);
-
 solver.Solve(cost_functor,&initial_guess);
-
-Vec3 answer=initial_guess;
+Vec3 answer = initial_guess;
 
 std::cout << answer << std::endl;
 ```
@@ -116,6 +110,46 @@ stability.
 * Custom Accumulation methods to build the matrices faster. This could involve 
 threading or custom SIMD like in [DVO](https://github.com/tum-vision/dvo/blob/bd21a70ce76d882a354de7b89d2429f974b8814c/dvo_core/include/dvo/core/math_sse.h#L48).
 * Weighting functions. You can apply huber norms or other weighting schemes.
+
+### Custom parameterizations
+By default the solver does the default additive update
+```cpp
+ // dx is the solved for update and x_prev is your previous value
+ x_new=x_prev+dx
+```
+
+You can create your own parameterization function to overwrite this functionality.
+ An example for this can be seen below. Here we are optimizing a quaternion
+ which has the requirement of norm being one. (Note this is a very naive way to
+ parameterize quaternions)
+```cpp
+
+template<typename Scalar>
+struct QuaternionNormedParameterization {
+
+  void operator()(
+      const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_prev,
+      const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> dx,
+      Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new) {
+      Eigen::Vector<Scalar,4,1> q; //quaternion
+    q = x_prev + dx;
+    q.normalize();
+    x_new=q;
+  }
+};
+
+struct CostFunction{
+ //some cost function
+}
+
+using LinearSolver=Eigen::LDLT<Eigen::Matrix<typename CostFunction::Scalar,
+                               CostFunction::NUM_PARAMETERS,CostFunction::NUM_PARAMETERS> >
+//Instantiate Solver like so
+
+ts::TinySolver<CostFunction,LinearSolver,
+QuaternionNormedParameterization<typename CostFunction::Scalar>> solver;
+
+```
 
 
 ## Using this directory
