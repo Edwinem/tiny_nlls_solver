@@ -5,11 +5,24 @@ This is a small non-linear least squares solver. I created it cause I found
 myself creating an ugly hack version when trying to implement dense visual slam
 problems. A good amount of this project derives from the tiny solver in Ceres.
 
+## Requirements
+
+Required:
+* Eigen
+
+Optional:
+* gtest
+* Open3D
+* OpenCV
 
 ## How to use
 
+The only actual file you need is [src/tiny_solver.h](src/tiny_solver.h). You can
+copy this into your project.
 
+Example on how to use the solver:
 ```cpp
+#include <src/tiny_solver.h>
 
 //Define cost function
 class ExampleCostFunction {
@@ -42,6 +55,9 @@ Vec3 answer=initial_guess;
 std::cout << answer << std::endl;
 ```
 
+The other files in **src** are optional. They can help if you want to wrap existing
+Ceres cost functions or use Ceres's autodiff functionality.
+
 For less contrived examples I recommend perusing **/examples** specifically
 [triangulation_example.cpp](examples/triangulation_example.cpp) and
  [triangulation_example_advanced.cpp](examples/triangulation_example_advanced.cpp).
@@ -51,12 +67,14 @@ For less contrived examples I recommend perusing **/examples** specifically
 
 
 ## Advanced Usages
+
+### Hessian based Cost function
 The solver supports another type of cost function which allows you to build the
 hessian and gradient matrices directly. The functor should look like the
  following
 ```cpp
 
-class ExampleCostFunction {
+class ExampleHessianCostFunction {
  public:
   typedef double Scalar;
   enum {
@@ -75,12 +93,23 @@ class ExampleCostFunction {
 
 As you are building the Normal Equations you can directly modify them to suit
 your needs. Possible things you can do:
-* Custom Preconditioner. You can modify the the hessian for better numerical
+* Custom Preconditioner. You can modify the hessian for better numerical
 stability.
 * Custom Accumulation methods to build the matrices faster. This could involve 
 threading or custom SIMD like in [DVO](https://github.com/tum-vision/dvo/blob/bd21a70ce76d882a354de7b89d2429f974b8814c/dvo_core/include/dvo/core/math_sse.h#L48).
 * Weighting functions. You can apply huber norms or other weighting schemes.
 
+
+## Using this directory
+This directory provides unit testing and advanced examples on how to use the tiny_solver.
+
+Unit tests can be turned on by enabling the **WITH_TESTING** CMake option which
+will also download gtest.
+
+Some examples require additional libraries like OpenCV and Open3D. They are by 
+default turned **OFF** and need to be turned on with another CMake option.
+Typically something like **WITH_XXXX** where **XXXX** is the desired library
+name(e.g OPENCV).
 
 ## Possible bugs
 
