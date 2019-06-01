@@ -131,7 +131,7 @@ struct QuaternionNormedParameterization {
       const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_prev,
       const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> dx,
       Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new) {
-      Eigen::Vector<Scalar,4,1> q; //quaternion
+    Eigen::Vector<Scalar,4,1> q; //quaternion
     q = x_prev + dx;
     q.normalize();
     x_new=q;
@@ -207,8 +207,9 @@ name(e.g OPENCV).
  also allow for custom scaling values.
 - [X] Gauss newton
 - [ ] Dogleg
-- [ ] Add increase in cost function as a failure to LM
+- [ ] Add increase in cost as a failure to LM
 - [ ] Benchmarks between this and ceres
+- [ ] Optional printing of status
 - [ ] Parameterizations needs to be a bit cleaner. Currently it is a functor,
 however, it is instantiated temporarily in the Solve function call, and thus
 can't be used from the outside. Should either be passed with the Solve call or

@@ -97,15 +97,7 @@ struct TriangulationCostFunction {
       std::vector<Eigen::Vector2d,
                   Eigen::aligned_allocator<Eigen::Vector2d>> &projections) {
     this->projections = projections;
-
-    //Convert the poses so that relative to the first pose so that pose[0] is
-    // the identity matrix
     this->poses = poses;
-    Eigen::Isometry3d T_c0_w = this->poses[0];
-    for (auto &pose : this->poses) {
-      pose = pose.inverse() * T_c0_w;
-
-    }
 
   }
 
@@ -203,6 +195,14 @@ int main() {
     Eigen::Isometry3d iso(pose);
     poses.push_back(iso);
     projections.push_back(reprojectPoint(iso, pt3d));
+  }
+
+  //Convert the poses so that they are relative to the first pose so that
+  // pose[0] is the identity matrix
+  Eigen::Isometry3d T_c0_w = poses[0];
+  for (auto &pose : poses) {
+    pose = pose.inverse() * T_c0_w;
+
   }
 
   ts::TinySolver<TriangulationCostFunction> solver;
