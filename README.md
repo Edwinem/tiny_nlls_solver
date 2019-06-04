@@ -17,8 +17,8 @@ Optional:
 
 ## How to use
 
-The only actual file you need is [src/tiny_solver.h](src/tiny_solver.h). You can
-copy this into your project.
+The only actual file you need is [src/tiny_solver.h](src/tiny_solver.h). You
+can copy this into your project.
 
 Example on how to use the solver:
 ```cpp
@@ -67,8 +67,8 @@ Vec3 answer = initial_guess;
 std::cout << answer << std::endl;
 ```
 
-The other files in **src** are optional. They can help if you want to wrap existing
-Ceres cost functions or use Ceres's autodiff functionality.
+The other files in **src** are optional. They can help if you want to wrap
+existing Ceres cost functions or use Ceres's autodiff functionality.
 
 For less contrived examples I recommend perusing **/examples** specifically
 [triangulation_example.cpp](examples/triangulation_example.cpp) and
@@ -97,7 +97,10 @@ class ExampleHessianCostFunction {
                   double* residual,
                   double* gradient,
                   double* hessian) const {
-    // do something
+    // calc residuals
+    if(gradient && hessian){
+    //calc gradient and hessian
+    }
     return true;
   }
 };
@@ -105,8 +108,8 @@ class ExampleHessianCostFunction {
 
 As you are building the Normal Equations you can directly modify them to suit
 your needs. Possible things you can do:
-* Custom Preconditioner. You can modify the hessian for better numerical
-stability.
+* Custom Preconditioner. You can modify the hessian and the gradient for better
+numerical stability.
 * Custom Accumulation methods to build the matrices faster. This could involve 
 threading or custom SIMD like in [DVO](https://github.com/tum-vision/dvo/blob/bd21a70ce76d882a354de7b89d2429f974b8814c/dvo_core/include/dvo/core/math_sse.h#L48).
 * Weighting functions. You can apply huber norms or other weighting schemes.
@@ -118,10 +121,10 @@ By default the solver does the default additive update
  x_new=x_prev+dx
 ```
 
-You can create your own parameterization function to overwrite this functionality.
- An example for this can be seen below. Here we are optimizing a quaternion
- which has the requirement of norm being one. (Note this is a very naive way to
- parameterize quaternions)
+You can create your own parameterization function to overwrite this
+functionality. An example for this can be seen below. Here we are optimizing a
+quaternion which has the requirement of norm being one. (Note this is a very
+naive way to parameterize quaternions)
 ```cpp
 
 template<typename Scalar>
@@ -173,7 +176,8 @@ ts::TinySolver<CostFunction,LinearSolver> solver;
 ```
 
 ## Using this directory
-This directory provides unit testing and advanced examples on how to use the tiny_solver.
+This directory provides unit testing and advanced examples on how to use the
+tiny_solver.
 
 Unit tests can be turned on by enabling the **WITH_TESTING** CMake option which
 will also download gtest.

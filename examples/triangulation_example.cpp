@@ -215,6 +215,7 @@ int main() {
   //Convert to msckf form alpha,beta,rho
   initial_guess /= initial_guess[2];
   initial_guess[2] = 1.0 / initial_guess[2];
+
   auto summary=solver.Solve(cost_functor, &initial_guess);
 
   //Convert MSCKF form alpha,beta,rho back to normal 3D

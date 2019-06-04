@@ -196,6 +196,14 @@ struct DefaultAdditionParameterization {
   }
 };
 
+
+enum MinimizerMethod {
+  LM, //levenberg marquadt
+  DOGLEG, //powell dogleg
+  GAUSSNEWTON
+};
+
+
 template<typename CostFunction,
     typename LinearSolver = Eigen::LDLT<
         Eigen::Matrix<typename CostFunction::Scalar,
@@ -226,11 +234,6 @@ class TinySolver {
 
   };
 
-  enum MinimizerMethod {
-    LM, //levenberg marquadt
-    DOGLEG, //powell dogleg
-    GAUSSNEWTON
-  };
 
   struct Options {
     Scalar gradient_tolerance = 1e-10;  // eps > max(J'*f(x))
