@@ -20,6 +20,7 @@
 #include <Eigen/Geometry>
 #include <iostream>
 #include <tiny_solver.h>
+#include <vector>
 using Vec2d=Eigen::Vector2d;
 using Vec3d=Eigen::Vector3d;
 using VecXd=Eigen::VectorXd;

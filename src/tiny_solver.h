@@ -191,18 +191,16 @@ struct DefaultAdditionParameterization {
   void operator()(
       const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_prev,
       const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> dx,
-      Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new) {
+      Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new) const {
     x_new = x_prev + dx;
   }
 };
-
 
 enum MinimizerMethod {
   LM, //levenberg marquadt
   DOGLEG, //powell dogleg
   GAUSSNEWTON
 };
-
 
 template<typename CostFunction,
     typename LinearSolver = Eigen::LDLT<
@@ -234,7 +232,6 @@ class TinySolver {
 
   };
 
-
   struct Options {
     Scalar gradient_tolerance = 1e-10;  // eps > max(J'*f(x))
     Scalar parameter_tolerance = 1e-8;  // eps > ||dx|| / ||x||
@@ -262,8 +259,10 @@ class TinySolver {
 
   }
 
-  const Summary &Solve(CostFunction &function, Parameters *x_and_min) {
-    ParameterizationFunction parameterization_function;
+  const Summary &Solve(CostFunction &function,
+                       Parameters *x_and_min,
+                       const ParameterizationFunction &parameterization_function
+                       = ParameterizationFunction()) {
 
     Initialize<NUM_RESIDUALS, NUM_PARAMETERS>(function);
     assert(x_and_min);
@@ -321,7 +320,7 @@ class TinySolver {
           //Update made it worse so stop iterations
           if (cost_ > prev_cost) {
             summary.status = COST_INCREASED;
-            cost_=prev_cost; //ensures final cost is last good one
+            cost_ = prev_cost; //ensures final cost is last good one
             break;
           }
           prev_cost = cost_;
@@ -539,7 +538,6 @@ class TinySolver {
       //is properly conditioned
       jacobi_scaling_.setConstant(1.0);
     }
-
 
     error_ = -error_;
     summary.gradient_max_norm = g_.array().abs().maxCoeff();

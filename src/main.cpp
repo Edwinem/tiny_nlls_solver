@@ -75,7 +75,7 @@ int main(){
 //  std::result_of<MyCostFunctionExample(const double* parameters,       double* gradient,
 //                       double* hessian,double* cost)>::type d=true;
 
-  s.options.minimizer=s.GAUSSNEWTON;
+  s.options.minimizer=ts::MinimizerMethod::GAUSSNEWTON;
 
   s.Solve(e,&data);
 

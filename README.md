@@ -133,7 +133,7 @@ struct QuaternionNormedParameterization {
   void operator()(
       const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_prev,
       const Eigen::Ref<const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> dx,
-      Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new) {
+      Eigen::Ref<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> x_new) const {
     Eigen::Vector<Scalar,4,1> q; //quaternion
     q = x_prev + dx;
     q.normalize();
@@ -142,22 +142,30 @@ struct QuaternionNormedParameterization {
 };
 
 struct CostFunction{
- //some cost function
+ // some cost function
 }
 
 using LinearSolver=Eigen::LDLT<Eigen::Matrix<typename CostFunction::Scalar,
                                CostFunction::NUM_PARAMETERS,CostFunction::NUM_PARAMETERS> >
-//Instantiate Solver like so
+// Instantiate Solver like so
 
 ts::TinySolver<CostFunction,LinearSolver,
 QuaternionNormedParameterization<typename CostFunction::Scalar>> solver;
+
+// Instantiate Parameterization Functor
+QuaternionNormedParameterization param;
+
+// Call Solve with parameterization
+solver.Solve(cost_function,&data,param);
+
+
 
 ```
 
 ### Changing the Solver/Decomposition method
 By default the tiny_solver uses **Eigen's** **LDLT** decomposition. This can be
 changed to any of **Eigen's** other decompositions such as **LLT** or 
-**HouseholderQR**.
+**LLDT**.
 
 Since it is templated you can also change the decomposition to your own custom 
 version.
@@ -168,7 +176,7 @@ struct CostFunction{
  //some cost function
 }
 
-using LinearSolver=Eigen::HouseholderQR<Eigen::Matrix<typename CostFunction::Scalar,
+using LinearSolver=Eigen::LLDT<Eigen::Matrix<typename CostFunction::Scalar,
                                CostFunction::NUM_PARAMETERS,CostFunction::NUM_PARAMETERS> >
 ts::TinySolver<CostFunction,LinearSolver> solver;
 
@@ -234,7 +242,11 @@ name(e.g OPENCV).
 - [ ] Add increase in cost as a failure to LM
 - [ ] Benchmarks between this and ceres
 - [ ] Optional printing of status
-- [ ] Parameterizations needs to be a bit cleaner. Currently it is a functor,
+- [ ] Add ability to use QR factorization
+- [ ] Think about if we should extend usage to passing a vector<double*> or double**.
+Currently we can only estimate one parameter or multiple parameters if we don't
+care about the cost of a copy. But this may overlap now too much with main Ceres.
+- [X] Parameterizations needs to be a bit cleaner. Currently it is a functor,
 however, it is instantiated temporarily in the Solve function call, and thus
 can't be used from the outside. Should either be passed with the Solve call or
 maybe as a std::function
